@@ -13,7 +13,7 @@ export const SYM_FLAG_TYPE_PARAMETER = 0x00040000;
 
 export class SymbolRawValueProvider implements RawValueProvider {
     rawValue: Buffer | undefined = undefined;
-    loaded = false;
+    loadPromise = undefined;
     bigEndian: boolean = false; //any default as good?
     symbol: TCFSymbolContextData;
     helper: VariableHelper;
@@ -70,10 +70,10 @@ export class SymbolRawValueProvider implements RawValueProvider {
     }
 
     async value(): Promise<Buffer | undefined> {
-        if (!this.loaded) {
-            this.loaded = true;
-            await this.loadValue();
+        if (!this.loadPromise) {
+            this.loadPromise = this.loadValue();
         }
+        await this.loadPromise;
         return this.rawValue;
     }
 
