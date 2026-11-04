@@ -10,12 +10,11 @@ export const launchOptionsSchema = z.object({
 	program: literal,
 	targetDevice: literal.max(256).refine(value => value === value.trim() && !/^\d+$/.test(value), 'Use the exact DAS device name, not a board model or numeric ID.'),
 	core: z.number().int().min(0).max(5),
-	flash: z.boolean().optional().describe('Default false. Set true only when the user explicitly authorizes programming this ELF before debugging, including the existing full-erase retry on a failed flasher attempt. Reuses the UI flasher/download flow; do not flash separately first.'),
 	entryFunction: z.string().min(1).max(256).regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional()
-		.describe('Optional exact C function identifier passed to the Agent as -e, e.g. core0_main. Useful for no-flash startup of a running target. Requested location only; inspect actual PC/stack after startup.'),
+		.describe('Optional exact C function identifier passed to the Agent as -e, e.g. core0_main. Startup always flashes and passes -f, with or without this option. Requested location only; inspect actual PC/stack after startup.'),
 	peripheralReadProfile: z.enum(['auto', 'disabled', peripheralProfileName]).optional().describe('MCP-only policy: auto shares the full matching SVD with the manual Viewer, preserving access/read-side-effect guards and requiring individual user approval for each write. disabled blocks MCP peripheral access; explicit legacy profile remains four-register read-only. No effect on manual access or flashing.'),
 }).strict();
-export type DebugLaunchOptions = z.infer<typeof launchOptionsSchema>;
+export type DebugLaunchOptions = z.input<typeof launchOptionsSchema>;
 export type DebugStartStage = 'configuration' | 'device-validation' | 'flashing' | 'agent-startup' | 'adapter-startup' | 'waiting-for-stop' | 'stopped';
 export type DebugStartProgress = {
 	stage: DebugStartStage;
@@ -45,7 +44,7 @@ export async function createMcpLaunchConfiguration(options: DebugLaunchOptions, 
 		type: 'aurix-tcf', request: 'launch', name: `AURIX MCP: ${input.targetDevice}`, noDebug: false,
 		workspace: input.workspaceFolder, program: input.program, targetDevice: input.targetDevice, core: input.core,
 		host: '127.0.0.1', port: 1534, autoStartAgent: true,
-		enableFlashing: input.flash === true, flashDownload: input.flash === true, stopOnEntry: true, resumeOtherCoresOnEntry: false,
+		enableFlashing: true, flashDownload: true, stopOnEntry: true, resumeOtherCoresOnEntry: false,
 		instructionStepping: false, liveWatchEnabled: false, enableConsoleLog: false,
 		__aurixMcpLaunchId: launchId,
 		...(input.entryFunction ? { entryFunction: input.entryFunction } : {}),
@@ -104,6 +103,9 @@ export class DebugLifecycleGate {
 		if (!expected) { throw new DebugMcpError('INVALID_LAUNCH', 'MCP launch configuration has not been validated.'); }
 		for (const [key, value] of Object.entries(expected)) {
 			if (configuration[key] !== value) { throw new DebugMcpError('INVALID_LAUNCH', `MCP launch field '${key}' changed during configuration resolution.`); }
+		}
+		if (configuration.enableFlashing !== true || configuration.flashDownload !== true || configuration.autoStartAgent !== true) {
+			throw new DebugMcpError('INVALID_LAUNCH', 'MCP startup requires flashing and an owned Agent with -f. Reuse an existing session if programming is not authorized.');
 		}
 		for (const key of Object.keys(configuration)) {
 			if (key in expected || key.startsWith('__') || key === 'liveWatchIntervalMs' || key === 'debugTCFMessages') { continue; }

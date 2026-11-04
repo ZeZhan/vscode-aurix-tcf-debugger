@@ -17,7 +17,7 @@ the current MCP coverage.
 - Call stacks, variables, Watch and Live Watch
 - Disassembly, instruction stepping, Peripheral Viewer and Memory Inspector
 - A configuration panel with device detection and saved Run and Debug / F5 configurations
-- Optional pre-debug flashing, including PPU/CDSP HEX files
+- Optional pre-debug flashing in the UI, including PPU/CDSP HEX files
 - AI-assisted debugging through the built-in Debug MCP server
 
 ## Requirements
@@ -42,7 +42,12 @@ the current MCP coverage.
 1. Open your firmware project in VS Code.
 2. Run **AURIX&trade; TCF: Open Debug Configuration** from the Command Palette.
 3. Select your ELF and use **Detect** to select the connected device. Configure any additional cores as needed.
-4. Click **Debug**. Leave **Enable flashing** off if the firmware is already programmed.
+4. Review **Enable flashing** and **Stop at function**, then click **Debug**.
+
+Without existing settings, the panel enables flashing and sets **Stop at function**
+to `core0_main`. Existing launch-file values take precedence over remembered panel
+values, which take precedence over these defaults. You can uncheck flashing or
+change/clear the function before starting. SVD selection remains **Auto**.
 
 Clicking **Debug** saves or updates the first AURIX entry in
 `.vscode/launch.json` in the first workspace folder. You can then select it in
@@ -86,7 +91,7 @@ function with the values for your project. Use the exact DAS name shown by
       "targetDevice": "<exact DAS device name>",
       "entryFunction": "core0_main",
       "workspace": "${workspaceFolder}",
-      "enableFlashing": false
+      "enableFlashing": true
     }
   ]
 }
@@ -94,8 +99,10 @@ function with the values for your project. Use the exact DAS name shown by
 
 ### Flashing support
 
-Select **Enable flashing** to program the selected ELF before debugging.
-Flashing is off by default. For PPU/CDSP images, **Flash Hex** also programs the
+**Enable flashing** programs the selected ELF before debugging and is checked
+when the panel has no existing setting. Uncheck it to preserve programmed firmware;
+manual no-flash startup may encounter the known Agent timeout described below.
+For PPU/CDSP images, **Flash Hex** also programs the
 matching `.hex` files beside their ELFs; generate those files beforehand.
 
 **Warning:** If the first flash attempt fails, the extension retries once with
@@ -123,16 +130,26 @@ To investigate a problem without starting a session yourself:
 
 > The LED on my board does not blink. Help me debug this project: check whether
 > initialization and the main loop run, and whether the output configuration
-> matches the code. The firmware is already flashed; ask before starting or
-> changing execution, and do not write registers.
+> matches the code. A new Debug MCP session will reprogram the ELF; ask for
+> approval before starting or changing execution, and do not write registers.
 
 MCP startup does not build or run launch-file tasks. Build the ELF first.
-Flashing is off by default; explicitly request **flash and debug** to use the
-Debugger's existing flasher/download workflow (`debug_start` with `flash: true`).
+**Every new Debug MCP session requires flashing and Agent `-f`**, using the
+Debugger's existing flasher/download workflow. `debug_start` has no `flash`
+parameter: both `flash:true` and `flash:false` are rejected before launch.
 This includes the existing full-erase retry after a failed flasher attempt;
-authorize it only for the intended ELF and device, and do not flash separately first.
-For no-flash startup, an optional `entryFunction`, such as `core0_main`, requests
-the Agent's stop-at-function behavior. Verify the actual stopped location.
+authorize it only for the intended ELF and device. The workflow may build and
+flash through AURIX MCP first, then optionally use Debug MCP to flash again and
+start debugging. Previous flashing does not skip the Debugger's flash step.
+To preserve existing firmware or a fault scene, **do not call `debug_start`**.
+Reuse an existing suitable session or ask the user about a manual UI startup;
+the UI still allows disabling flashing. Manual startup may still encounter the
+known backend limitation below.
+`entryFunction` remains unset by default; an optional value such as `core0_main`
+requests the Agent's stop-at-function behavior and does not disable flashing.
+Verify the actual stopped location. Existing-session reuse does not flash.
+After upgrading from 0.1.30, refresh the MCP tools and update the Debug Skill;
+remove the obsolete `flash` field only when programming is authorized.
 Starting a session may reset or run the target;
 variable and register inspection requires all reported cores to be stopped.
 
@@ -150,6 +167,12 @@ an existing file requires confirmation.
 
 #### Approvals
 
+- An explicit "build, flash, then verify with the debugger" request covers the
+  required startup reprogramming for the same task, device and task-built ELF.
+  The Debug skill announces the additional programming and existing full-erase
+  retry rather than asking for duplicate conversational approval. Explicit
+  no-reflash, no-full-erase or preserve-scene constraints take precedence;
+  changed scope and failed/uncertain startup retries are not covered.
 - Your AI client may ask you to trust the MCP server or approve tool calls.
   Use **Chat: Manage Tool Approval**, where available, to manage individual tools
   rather than approving every call separately. Tell the AI whether it may pause,
@@ -163,7 +186,7 @@ an existing file requires confirmation.
 #### What you can do with MCP
 
 - List, start and terminate debug sessions, or reuse a session started from the UI.
-- Optionally flash the selected ELF as part of an explicitly authorized startup.
+- Flash the selected ELF as a required part of an authorized new MCP session.
 - Pause, resume, and step into, over or out of a function using the current stepping mode.
 - List, add and remove source breakpoints, shared with the VS Code UI.
 - Inspect core states, call stacks, local variables, globals and file-static variables.
@@ -283,4 +306,4 @@ The code in this repository is released under the MIT License - see
 The prebuilt tools under `bin/` retain their own licenses. See
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
-**Known issue:** If the target is already running, the TCF agent may fail to start when flashing is disabled and no stop-at-function (`entryFunction`) is configured.
+**Known issue:** Manual startup without flashing may time out waiting for the TCF agent; setting a stop-at-function (`entryFunction`) is not a guaranteed workaround.

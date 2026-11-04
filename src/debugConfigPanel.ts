@@ -61,8 +61,8 @@ export async function showDebugConfigPanel(context: vscode.ExtensionContext): Pr
 			ppuFlashHex: Boolean((launchDefault as any).ppuFlashHex ?? (saved as any).ppuFlashHex ?? false),
 			cdspFlashHex: Boolean((launchDefault as any).cdspFlashHex ?? (saved as any).cdspFlashHex ?? false),
 			scrElfPath: ((launchDefault as any).scrElfPath ?? saved.scrElfPath ?? '') as string,
-			enableFlashing: Boolean((launchDefault as any).enableFlashing ?? (saved as any).enableFlashing ?? false),
-			entryFunction: (launchDefault.entryFunction ?? saved.entryFunction ?? '') as string,
+			enableFlashing: Boolean((launchDefault as any).enableFlashing ?? (saved as any).enableFlashing ?? true),
+			entryFunction: (launchDefault.entryFunction ?? saved.entryFunction ?? 'core0_main') as string,
 			targetDevice: (launchDefault.targetDevice ?? saved.targetDevice ?? '') as string,
 			svdFile: (launchDefault.svdFile ?? saved.svdFile ?? '') as string,
 			// Default to false: only enable if explicitly requested.

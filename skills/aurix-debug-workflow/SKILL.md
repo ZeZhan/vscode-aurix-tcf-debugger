@@ -35,6 +35,19 @@ evidence, caveats and final session state.
 - Obtain explicit authorization for the needed execution changes and breakpoint
   edits unless already covered by the user's request. General permission to
   diagnose a problem is not permission to reset, flash or write hardware.
+- An explicit request to "build, flash, then verify with the debugger" already
+  authorizes the required startup reprogramming for the same task, selected
+  device and ELF built for that task. Do not ask for a second conversational
+  approval merely because another tool has already flashed that ELF.
+  Briefly announce that Debug MCP will program it again using the existing
+  flasher flow, including its one full-erase retry on flasher failure, then
+  proceed within the requested verification scope.
+  An explicit no-reflash, no-full-erase or preserve-scene instruction takes
+  precedence: do not start a programming session under this rule. Ask if the
+  task, device, ELF provenance or programming scope is unclear or changes.
+  "Inspect/debug the already-flashed program" alone is not a request to flash.
+  This authorization does not permit automatic retries of failed or uncertain
+  `debug_start` calls, unrelated writes or bypassing client tool approvals.
 - For multi-step execution not already authorized, ask once for a bounded plan:
   session/core, allowed actions, execution budget and final state. Do not repeat
   that conversational authorization for each tool call within the agreed scope.
@@ -56,15 +69,25 @@ evidence, caveats and final session state.
    report the returned stage/timings and partial findings; do not infer missing
    results, automatically retry or start from diagnostic-only partial data.
 4. `launchArguments` are advisory, not authorization or proof of flashed
-   firmware. Confirm the workspace, built/flashed ELF, exact DAS name and core
-   before an authorized `debug_start`. Preparation itself never builds or flashes.
-5. `debug_start` defaults to no flashing. For an explicitly authorized
-   "flash and debug" request, use `flash: true` to reuse the Debugger's existing
-   flasher/download workflow; do not flash separately first. Confirm the ELF,
-   exact device and permission for the existing full-erase retry after a failed
-   flasher attempt. Do not turn a failed no-flash launch into flashing on your own.
-   Optional `entryFunction: "core0_main"` requests a stop-at-function and can be
-   used without flashing for the known running-target startup limitation.
+   firmware. Verify the workspace, built/flashed ELF, exact DAS name and core
+   against the request and preparation results before `debug_start`; do not
+   re-ask for information or permission already established in scope.
+   Preparation itself never builds or flashes.
+5. Every new `debug_start` requires flashing and Agent `-f`.
+   There is no `flash` input: omit it; both true and false are rejected.
+   It reuses the Debugger's existing flasher/download workflow. An AURIX AI Agent
+   workflow may build and flash separately, then optionally flash again through
+   Debug MCP for validation; prior flashing does not skip this startup flash.
+   Apply the authorization rule in section 1 to the ELF and exact device;
+   ask only for missing authorization, not a second approval for the same
+   explicit flash-and-verify task. If reprogramming
+   is forbidden or a fault scene must be preserved, do not call `debug_start`.
+   Reuse an existing suitable session or ask the user about manual UI startup;
+   UI options are unchanged, but backend startup limitations can still apply.
+   Do not silently drop a rejected no-flash argument and retry with programming.
+   `entryFunction` is unset by default and does not disable flashing.
+   Optional `entryFunction: "core0_main"` requests a stop-at-function; it does
+   not bypass the required flashing or establish a stopped location.
    It is a request, not proof of the stopped location. Never invent a function.
    Startup never builds, reads a saved launch configuration or runs launch tasks.
    It can reset/run the target; inspect actual PC/stack after its startup pause.
@@ -176,10 +199,12 @@ samples, or claim a full cycle from endpoints alone.
   External Agents need separate release; do not kill processes, force device
   ownership or proceed while release is unconfirmed.
 - Builds require separately available build tools or the user's established
-  workflow. Flashing can use an authorized `debug_start` with `flash: true`, or
-  a separately available flash tool, not both for the same planned startup.
-  With an older Debugger lacking the flash option, hand flashing to the user or
-  their established workflow; never invent tools or bypass the MCP interface.
+  workflow. Flashing can use a separately available flash tool without debugging.
+  If validation then needs a new `debug_start`, it must flash again, without
+  sending a `flash` argument. Prior programming does not skip this step.
+  On an obsolete-schema error, refresh the tools and check programming
+  authorization before correcting the request; do not retry automatically.
+  Never invent tools or bypass the MCP interface to obtain a no-flash startup.
 - After a rebuild/flash, revalidate the new ELF and start a new authorized
   session. Reacquire handles and re-check breakpoints and observation points.
   A local ELF hash identifies the file, not the firmware on the board.

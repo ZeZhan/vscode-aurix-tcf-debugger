@@ -328,7 +328,7 @@ export class DebugController {
 		}
 	}
 
-	async start(options: DebugLaunchOptions, signal: AbortSignal, timeoutMs = options.flash ? 180000 : 60000) {
+	async start(options: DebugLaunchOptions, signal: AbortSignal, timeoutMs = 180000) {
 		options = launchOptionsSchema.parse(options);
 		if (this.sessions.size || this.starting) {
 			throw new DebugMcpError('BUSY', 'An AURIX session already exists or is starting. Select it using debug_sessions; do not launch another backend.');
@@ -338,11 +338,11 @@ export class DebugController {
 		let entry: Entry | undefined;
 		let launched = false;
 		let progress: DebugStartProgress = {
-			stage: 'configuration', flashStatus: options.flash ? 'pending' : 'not-requested',
+			stage: 'configuration', flashStatus: 'pending',
 			flashAttempts: 0, eraseAllRetried: false, agentReady: false,
 		};
 		const startupEvidence = () => ({
-			flashRequested: options.flash === true,
+			flashRequested: true,
 			flashPerformed: progress.flashStatus === 'completed' ? true :
 				(progress.flashStatus === 'running' || progress.flashStatus === 'failed' ? null : false),
 			requestedEntryFunction: options.entryFunction ?? null,
@@ -369,7 +369,7 @@ export class DebugController {
 					entry = this.entry(String(event.body?.sessionId));
 					const readyEntry = entry;
 					progress.stage = 'waiting-for-stop';
-					if (options.flash && progress.flashStatus !== 'completed') {
+					if (progress.flashStatus !== 'completed') {
 						throw new DebugMcpError('FLASH_NOT_CONFIRMED', 'The launch returned without confirmation that the requested flasher operation completed.');
 					}
 					await readyEntry.events.waitFor('stopped', 0, timeoutMs, () => true, inner);
