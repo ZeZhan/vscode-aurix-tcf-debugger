@@ -2,7 +2,7 @@
 
 Simple, human-readable release notes for this extension.
 
-## Unreleased
+## 0.1.32
 - Fix concurrent array-value reads by awaiting one shared load instead of returning incomplete values. Thanks to @ScholzDaniel for [PR #5](https://github.com/ZeZhan/vscode-aurix-tcf-debugger/pull/5).
 
 ## 0.1.31
