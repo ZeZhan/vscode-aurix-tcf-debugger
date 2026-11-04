@@ -133,29 +133,17 @@ To investigate a problem without starting a session yourself:
 > matches the code. A new Debug MCP session will reprogram the ELF; ask for
 > approval before starting or changing execution, and do not write registers.
 
-MCP startup does not build or run launch-file tasks. Build the ELF first.
-**Every new Debug MCP session requires flashing and Agent `-f`**, using the
-Debugger's existing flasher/download workflow. `debug_start` has no `flash`
-parameter: both `flash:true` and `flash:false` are rejected before launch.
-This includes the existing full-erase retry after a failed flasher attempt;
-authorize it only for the intended ELF and device. The workflow may build and
-flash through AURIX MCP first, then optionally use Debug MCP to flash again and
-start debugging. Previous flashing does not skip the Debugger's flash step.
-To preserve existing firmware or a fault scene, **do not call `debug_start`**.
-Reuse an existing suitable session or ask the user about a manual UI startup;
-the UI still allows disabling flashing. Manual startup may still encounter the
-known backend limitation below.
-`entryFunction` remains unset by default; an optional value such as `core0_main`
-requests the Agent's stop-at-function behavior and does not disable flashing.
-Verify the actual stopped location. Existing-session reuse does not flash.
-After upgrading from 0.1.30, refresh the MCP tools and update the Debug Skill;
-remove the obsolete `flash` field only when programming is authorized.
-Starting a session may reset or run the target;
-variable and register inspection requires all reported cores to be stopped.
+- **Build the ELF first.** MCP does not build or run launch-file tasks.
+- **New sessions always flash (`-f`), even after prior programming.** `debug_start`
+  has no `flash` option. Authorize the ELF/device and the
+  [full-erase retry](#flashing-support).
+- **Preserve a fault scene? Reuse an existing session.** Reuse does not flash;
+  do not call `debug_start`.
+- Startup may reset/run the target. Stop all reported cores before inspecting
+  variables or registers.
 
-Debug MCP is available automatically in a trusted local Windows workspace.
-If it is missing, check **MCP: List Servers**. To turn it off, set
-`aurix-tcf.mcp.enabled` to `false`.
+MCP is enabled automatically in trusted local Windows workspaces.
+Check **MCP: List Servers** if missing; disable with `aurix-tcf.mcp.enabled: false`.
 
 #### Install the optional Debug skill
 
