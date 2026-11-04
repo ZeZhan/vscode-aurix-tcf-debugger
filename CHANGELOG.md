@@ -2,6 +2,16 @@
 
 Simple, human-readable release notes for this extension.
 
+## 0.1.31
+- Default the configuration panel to enabled flashing and stop at `core0_main` when no existing setting is available; preserve launch-file and remembered choices, including disabled flashing and an empty function.
+- Require flashing and Agent `-f` for every new Debug MCP session; remove the `flash` input and reject obsolete flags before launch.
+- Enforce required flashing/download settings at the launch factory boundary; preserve UI flashing options and reuse of existing sessions.
+- Update startup guidance: preserving firmware requires an existing session or a user-selected manual workflow, not an MCP no-flash launch.
+
+## 0.1.30
+- Default Debug MCP startup to flashing, even after separate AURIX MCP programming; use explicit `flash: false` to preserve existing firmware.
+- Keep stop-at-function optional and UI flashing defaults unchanged; retain startup evidence, cancellation guards and the existing full-erase retry.
+
 ## 0.1.29
 - Add explicit `debug_start` options for flashing through the existing UI workflow and requesting an Agent stop-at-function; default startup remains no-flash.
 - Return actual flash progress and phase-specific startup failures, including Agent port-readiness timeouts, instead of losing factory errors behind `START_REJECTED`.
