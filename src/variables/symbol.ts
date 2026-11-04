@@ -13,7 +13,7 @@ export const SYM_FLAG_TYPE_PARAMETER = 0x00040000;
 
 export class SymbolRawValueProvider implements RawValueProvider {
     rawValue: Buffer | undefined = undefined;
-    loadPromise = undefined;
+    private loadPromise: Promise<void> | undefined;
     bigEndian: boolean = false; //any default as good?
     symbol: TCFSymbolContextData;
     helper: VariableHelper;

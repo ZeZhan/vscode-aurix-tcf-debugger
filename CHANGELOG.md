@@ -2,6 +2,9 @@
 
 Simple, human-readable release notes for this extension.
 
+## Unreleased
+- Fix concurrent array-value reads by awaiting one shared load instead of returning incomplete values. Thanks to @ScholzDaniel for [PR #5](https://github.com/ZeZhan/vscode-aurix-tcf-debugger/pull/5).
+
 ## 0.1.31
 - Default the configuration panel to enabled flashing and stop at `core0_main` when no existing setting is available; preserve launch-file and remembered choices, including disabled flashing and an empty function.
 - Require flashing and Agent `-f` for every new Debug MCP session; remove the `flash` input and reject obsolete flags before launch.
