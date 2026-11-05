@@ -53,7 +53,9 @@ export class CompositeVariable extends AbstractVariable {
             }
 
             const self = this;
-            const valueProvider = new class implements RawValueProvider {
+            const valueProvider = fieldContext.Offset === undefined && this.helper.createBitfieldValue
+                ? this.helper.createBitfieldValue(this.symbol, fieldContext, typeContext)
+                : new class implements RawValueProvider {
                 async value(): Promise<Buffer | undefined> {
                     if (fieldContext.Offset === undefined || fieldContext.Size === undefined) {
                         //TODO: also fallback to name being the index?

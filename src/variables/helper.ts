@@ -32,11 +32,8 @@ export abstract class DefaultVariableHelper implements VariableHelper, Logger {
             case TCFTypeClass.pointer:
                 return new PointerVariable(typeDetails, symbolDetails, nameProvider, valueProvider, this);
             case TCFTypeClass.composite:
-                if (symbolDetails) {
-                    return new CompositeVariable(typeDetails, symbolDetails, this, nameProvider, valueProvider);
-                } else {
-                    return undefined;
-                }
+                // Array elements have captured bytes and a type, but no separate storage symbol.
+                return new CompositeVariable(typeDetails, symbolDetails ?? typeDetails, this, nameProvider, valueProvider);
             case TCFTypeClass.array:
                 return new ArrayVariable(typeDetails, this, nameProvider, valueProvider);
             case TCFTypeClass.enumeration:

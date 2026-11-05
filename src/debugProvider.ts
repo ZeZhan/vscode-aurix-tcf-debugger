@@ -2774,8 +2774,8 @@ export class AurixTCFDebugSession extends LifetimeDebugSession {
 			if (children && children.length > 0) {
 				variablesReference = this.createSubVariableReference(parentRef, children);
 			}
-		} catch {
-			// ignore child errors
+		} catch (error) {
+			this.tcfLogger.error(`Cannot expand variable '${name}': ${String(error)}`);
 		}
 		return new Variable(name, value, variablesReference);
 	}

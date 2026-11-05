@@ -2,6 +2,13 @@
 
 Simple, human-readable release notes for this extension.
 
+## 0.1.34
+- Decode bit-sized expression location pieces and read UI bitfield children through their owning object; use the Agent's extracted values without shifting them again. Reject incomplete bitfield results and preserve MCP's restricted inspection policy.
+
+## 0.1.33
+- Read UI pointer children lazily from the selected core instead of displaying empty placeholders; preserve MCP's no-dereference policy and report unreadable targets.
+- Expand structure-array elements using their type metadata and captured array bytes when no individual storage symbol exists.
+
 ## 0.1.32
 - Fix concurrent array-value reads by awaiting one shared load instead of returning incomplete values. Thanks to @ScholzDaniel for [PR #5](https://github.com/ZeZhan/vscode-aurix-tcf-debugger/pull/5).
 

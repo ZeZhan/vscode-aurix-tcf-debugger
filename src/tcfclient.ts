@@ -8,8 +8,9 @@ SPDX-License-Identifier: MIT
 // - debugProvider.ts uses TCFClient to implement the DAP debug adapter functionality
 import { AbstractTCFClient } from "./tcf";
 import { BreakpointData, BreakpointStatus, InstanceStatusData, asBreakpointData, asBreakpointStatus } from "./tcf/breakpoints";
-import { EvaluateExpressionsCommand, EvaluateResult, GetChildrenExpressionCommand, GetContextExpressionsCommand } from "./tcf/expressions";
+import { CreateExpressionsCommand, DisposeExpressionsCommand, EvaluateExpressionsCommand, EvaluateResult, GetChildrenExpressionCommand, GetContextExpressionsCommand } from "./tcf/expressions";
 import { MapToSourceLineNumbersCommand, TCFCodeAreaLineNumbers } from "./tcf/linenumbers";
+import { GetMemoryCommand } from "./tcf/memory";
 import { asNullableTCFContextData, asTCFContextData, ContextSuspendedData, GetChildrenRunControlCommand, GetContextRunControlCommand, GetStateRunControlCommand, parseContextSuspended, TCFContextData, TCFStateData } from "./tcf/runcontrol";
 import { GetChildrenRangeStackTraceCommand, GetChildrenStackTraceCommand, GetContextStackTraceCommand, TCFContextDataStackTrace } from "./tcf/stacktrace";
 import { FindByAddrSymbolsCommand, GetContextSymbolsCommand, TCFSymbolClass, TCFSymbolContextData, TCFTypeClass } from "./tcf/symbols";
@@ -103,6 +104,27 @@ function isExecutionContextRunningError(e: any): boolean {
 
 export const DEFAULT_SEND_COMMAND_CHUNK_SIZE = 10;
 
+function decodeBitfieldValue(result: EvaluateResult, type: TCFSymbolContextData): Buffer {
+    const properties = result.properties;
+    const piece = properties?.Pieces?.[0];
+    const size = validateVariableSize(type.Size);
+    if (![1, 2, 4, 8].includes(size) || !properties || properties.Pieces?.length !== 1 || !piece ||
+        !Number.isSafeInteger(piece.BitSize) || piece.BitSize === undefined || piece.BitSize < 1 || piece.BitSize > size * 8 ||
+        (piece.BitOffs !== undefined && (!Number.isSafeInteger(piece.BitOffs) || piece.BitOffs < 0)) ||
+        (piece.Size !== undefined && piece.Size !== size) ||
+        (type.TypeClass !== TCFTypeClass.integer && type.TypeClass !== TCFTypeClass.cardinal) ||
+        (properties.Class !== undefined && properties.Class !== type.TypeClass) ||
+        properties.ImplicitPointer || properties.BitStride || properties.BinaryScale || properties.DecimalScale) {
+        throw new Error('Unsupported bitfield value layout; expected one unscaled integer bit piece.');
+    }
+    const bytes = decodeEvaluatedValue(result.value, size);
+    if (bytes.length !== size) {
+        throw new Error(`Incomplete bitfield value: expected ${size} bytes.`);
+    }
+    // BitOffs describes storage, not the returned bytes: the Agent already extracts/sign-extends the value.
+    return bytes;
+}
+
 export abstract class TCFClient extends AbstractTCFClient {
 
     private _threadsCache: { info: TCFContextData; state: TCFStateData }[] | undefined;
@@ -180,7 +202,8 @@ export abstract class TCFClient extends AbstractTCFClient {
                 //Such partial data was seen:
                 // {"result":{"value":{"type":"Buffer","data":[110,117,108,108]},"properties":null}}
                 //thus, ignoring partial results without .properties
-                if (!strict && partial.result.properties !== null) {
+                const hasBitPieces = partial.result.properties?.Pieces?.some(piece => piece.BitSize !== undefined);
+                if (!strict && !hasBitPieces && partial.result.properties !== null) {
                     value = partial.result;
                     //TODO: besides the (partial) value, we should also signal in the final result that *it is a partial value*
                     // then the UI could display it differently
@@ -277,6 +300,47 @@ export abstract class TCFClient extends AbstractTCFClient {
             sendCommand<T>(c: SimpleCommand<T>): Promise<T> {
                 return self.sendCommand(c);
             }
+            createBitfieldValue(parent: TCFSymbolContextData, field: TCFSymbolContextData, type: TCFSymbolContextData): RawValueProvider {
+                let pending: Promise<Buffer> | undefined;
+                let bigEndian = false;
+                return {
+                    value: () => pending ??= (async () => {
+                        validateVariableSize(type.Size);
+                        if (parent.Class !== TCFSymbolClass.reference || !parent.ID || /[{}\x00-\x1f\x7f]/.test(parent.ID) ||
+                            !field.Name || !/^[A-Za-z_][A-Za-z_0-9]*$/.test(field.Name)) {
+                            throw new Error('Invalid bitfield parent symbol identity or member name.');
+                        }
+                        // A member symbol's location is relative to its object, not independently evaluable.
+                        const expression = '(${' + parent.ID + '}).' + field.Name;
+                        const id = await self.sendCommand(new CreateExpressionsCommand(stack || ctx, null, expression));
+                        try {
+                            const evaluated = await self.evaluateVariable(id, true);
+                            if (!evaluated) { throw new Error('Bitfield evaluation returned no value.'); }
+                            const bytes = decodeBitfieldValue(evaluated, type);
+                            bigEndian = evaluated.properties?.BigEndian === true;
+                            return bytes;
+                        } finally {
+                            await self.sendCommand(new DisposeExpressionsCommand(id));
+                        }
+                    })(),
+                    isBigEndian: () => bigEndian,
+                };
+            }
+            async readPointerMemory(address: number, size: number): Promise<Buffer> {
+                validateVariableSize(size);
+                if (!Number.isSafeInteger(address) || address < 0 || !Number.isSafeInteger(address + size)) {
+                    throw new Error('Pointer target address range cannot be represented safely by TCF.');
+                }
+                const result = await self.sendCommand(new GetMemoryCommand(ctx, address, 1, size));
+                if (result.errorAddresses?.length) {
+                    throw new Error('Pointer target memory contains unreadable bytes.');
+                }
+                const bytes = tryDecodeBase64Text(result.base64);
+                if (!bytes || bytes.length !== size) {
+                    throw new Error(`Pointer target memory did not return the expected ${size} bytes.`);
+                }
+                return bytes;
+            }
         }();
 
         let typeDetails: TCFSymbolContextData;
@@ -304,12 +368,17 @@ export abstract class TCFClient extends AbstractTCFClient {
         let nameProvider = new FixedNameProvider(displayName || varName);
         let valueProvider: RawValueProvider = new EvaluatedRawValueProvider(
             evaluated.value, evaluated.properties.BigEndian ?? false, expressionContext?.Size ?? typeDetails.Size);
+        const bitfieldValue = evaluated.properties.Pieces?.some(piece => piece.BitSize !== undefined)
+            ? decodeBitfieldValue(evaluated, typeDetails) : undefined;
+        if (bitfieldValue) {
+            valueProvider = { value: async () => bitfieldValue, isBigEndian: () => evaluated.properties?.BigEndian === true };
+        }
 
         if (symbolID) {
             symbolDetails = inspectedSymbol ?? await this.sendCommand(new GetContextSymbolsCommand(symbolID));
             this.console.received(`Got variable ${symbolDetails.Name}`);
             nameProvider = new SymbolNameProvider(symbolDetails);
-            if (!inspection) { valueProvider = new SymbolRawValueProvider(symbolDetails, ctx, helper, helper /* as Logger */); }
+            if (!inspection && !bitfieldValue) { valueProvider = new SymbolRawValueProvider(symbolDetails, ctx, helper, helper /* as Logger */); }
 
             if (typeDetails.TypeClass !== symbolDetails.TypeClass) {
                 //shouldn't happen?
