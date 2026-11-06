@@ -18,12 +18,17 @@ import { ContextResetCapability, GetCapabilitiesContextResetCommand, ResetContex
 import { TCFErrorCodes } from "./tcf/error";
 import { asArray, asNullableArray, asString, asStringArray, CancellationFunction, EMPTY_BUFFER, InterruptedError, parseResponse, responseLengthAbout, SimpleCommand, TCFPartialResultError } from "./tcf/tcfutils";
 import { DefaultVariableHelper } from "./variables/helper";
-import { SymbolRawValueProvider } from "./variables/symbol";
+import { SymbolRawValueProvider, SYM_FLAG_BIG_ENDIAN } from "./variables/symbol";
+import { isIncompleteExternalArray, resolveArrayDefinition } from "./variables/arrayDefinition";
 import { ClientVariable, FixedNameProvider, RawValueProvider, SymbolNameProvider } from "./variables/types";
 import { InspectionCheck, InspectionVariableHelper, validateVariableSize } from "./variables/inspection";
 import { LocalInspectionError } from "./variables/inspectionDiagnostics";
 import { CoreRegisterReader } from "./coreRegisters";
 import * as validateBreakpointData from './tcf/validators/validate-BreakpointData';
+
+interface VariableEvaluation extends EvaluateResult {
+    partialError?: TCFPartialResultError<EvaluateResult>;
+}
 
 class EvaluatedRawValueProvider implements RawValueProvider {
     constructor(private readonly rawValue: Buffer, private readonly bigEndian: boolean, private readonly size?: number) {
@@ -174,26 +179,68 @@ export abstract class TCFClient extends AbstractTCFClient {
     }
 
     async getStackVariables(ctx: string, stack: string): Promise<ClientVariable[]> {
-        let result: ClientVariable[] = [];
+        const result: ClientVariable[] = [];
         try {
             const varNames = await this.sendCommand(new GetChildrenExpressionCommand(stack));
             for (const varName of varNames) {
-                const v = await this.getExpressionIDVariable(ctx, stack, varName);
-                if (!v) {
-                    continue;
+                try {
+                    const variable = await this.getExpressionIDVariable(ctx, stack, varName);
+                    if (variable) { result.push(variable); }
+                } catch (error) {
+                    const cause = error instanceof TCFPartialResultError ? error.cause : undefined;
+                    if (!cause || typeof cause !== 'object' || !('Code' in cause) || cause.Code !== TCFErrorCodes.OTHER ||
+                        !('Format' in cause) || typeof cause.Format !== 'string' ||
+                        !cause.Format.includes('Object is not available at this location in the code')) {
+                        throw error;
+                    }
+                    result.push(await this.describeUnavailableLocal(ctx, stack, varName, cause.Format));
                 }
-                result.push(v);
             }
         } catch (e) {
-            if (!isExecutionContextRunningError(e)) {
-                this.console.error("Get children expression error " + JSON.stringify(e));
+            if (isExecutionContextRunningError(e instanceof TCFPartialResultError ? e.cause : e)) {
+                return [];
             }
+            this.console.error(`Get children expression error: ${String(e)} ${JSON.stringify(e)}`);
+            throw e;
         }
         return result;
     }
 
-    private async evaluateVariable(varName: string, strict = false): Promise<EvaluateResult | undefined> {
-        let value;
+    private async describeUnavailableLocal(ctx: string, stack: string, expressionId: string, reason: string): Promise<ClientVariable> {
+        const metadata = await this.sendCommand(new GetContextExpressionsCommand(expressionId));
+        if (!metadata || metadata.ID !== expressionId || !metadata.SymbolID ||
+            (metadata.ParentID !== undefined && metadata.ParentID !== stack && metadata.ParentID !== ctx)) {
+            throw new Error('Cannot describe unavailable local: missing or mismatched expression identity.');
+        }
+        const symbol = await this.sendCommand(new GetContextSymbolsCommand(metadata.SymbolID));
+        const name = symbol.Name;
+        if (symbol.ID !== metadata.SymbolID || !name?.trim() ||
+            (symbol.Class !== TCFSymbolClass.reference && symbol.Class !== TCFSymbolClass.value)) {
+            throw new Error('Cannot describe unavailable local: missing or mismatched source symbol.');
+        }
+        const typeId = symbol.TypeID ?? metadata.Type;
+        if (!typeId || (symbol.TypeID && metadata.Type && symbol.TypeID !== metadata.Type)) {
+            throw new Error('Cannot describe unavailable local: missing or conflicting type identity.');
+        }
+        const type = await this.sendCommand(new GetContextSymbolsCommand(typeId));
+        if (type.ID !== typeId || type.Class !== TCFSymbolClass.type) {
+            throw new Error('Cannot describe unavailable local: mismatched type metadata.');
+        }
+        this.console.error(`Local '${name}' is unavailable: ${reason}`);
+        // Keep the declaration visible without inventing bytes or expanding an unlocated object.
+        return {
+            type,
+            name: () => name,
+            value: async () => undefined,
+            displayValue: async () => `<unavailable: ${reason}>`,
+            getChildren: async () => [],
+            isBigEndian: () => !!((symbol.Flags ?? 0) & SYM_FLAG_BIG_ENDIAN),
+            isRegister: () => symbol.Register !== undefined,
+        };
+    }
+
+    private async evaluateVariable(varName: string, strict = false): Promise<VariableEvaluation | undefined> {
+        let value: VariableEvaluation | undefined;
         try {
             value = await this.sendCommand(new EvaluateExpressionsCommand(varName));
         } catch (e) {
@@ -204,7 +251,7 @@ export abstract class TCFClient extends AbstractTCFClient {
                 //thus, ignoring partial results without .properties
                 const hasBitPieces = partial.result.properties?.Pieces?.some(piece => piece.BitSize !== undefined);
                 if (!strict && !hasBitPieces && partial.result.properties !== null) {
-                    value = partial.result;
+                    value = { ...partial.result, partialError: partial };
                     //TODO: besides the (partial) value, we should also signal in the final result that *it is a partial value*
                     // then the UI could display it differently
                 }
@@ -327,19 +374,7 @@ export abstract class TCFClient extends AbstractTCFClient {
                 };
             }
             async readPointerMemory(address: number, size: number): Promise<Buffer> {
-                validateVariableSize(size);
-                if (!Number.isSafeInteger(address) || address < 0 || !Number.isSafeInteger(address + size)) {
-                    throw new Error('Pointer target address range cannot be represented safely by TCF.');
-                }
-                const result = await self.sendCommand(new GetMemoryCommand(ctx, address, 1, size));
-                if (result.errorAddresses?.length) {
-                    throw new Error('Pointer target memory contains unreadable bytes.');
-                }
-                const bytes = tryDecodeBase64Text(result.base64);
-                if (!bytes || bytes.length !== size) {
-                    throw new Error(`Pointer target memory did not return the expected ${size} bytes.`);
-                }
-                return bytes;
+                return self.readVariableMemory(ctx, address, size);
             }
         }();
 
@@ -376,6 +411,46 @@ export abstract class TCFClient extends AbstractTCFClient {
 
         if (symbolID) {
             symbolDetails = inspectedSymbol ?? await this.sendCommand(new GetContextSymbolsCommand(symbolID));
+            if (!inspection && isIncompleteExternalArray(typeDetails, symbolDetails)) {
+                if (evaluated.partialError) { throw evaluated.partialError; }
+                if (typeDetails.ID !== typeID || symbolDetails.ID !== symbolID ||
+                    (evaluated.properties.Class !== undefined && evaluated.properties.Class !== TCFTypeClass.array) ||
+                    (expressionContext?.Size !== undefined && expressionContext.Size !== 0) ||
+                    (evaluated.properties.Address !== undefined && evaluated.properties.Address !== symbolDetails.Address) ||
+                    (evaluated.properties.BigEndian !== undefined &&
+                        evaluated.properties.BigEndian !== !!((symbolDetails.Flags ?? 0) & SYM_FLAG_BIG_ENDIAN)) ||
+                    evaluated.properties.ImplicitPointer || evaluated.properties.Pieces?.length ||
+                    evaluated.properties.BitStride || evaluated.properties.BinaryScale || evaluated.properties.DecimalScale) {
+                    throw new Error('Cannot resolve incomplete array: expression storage or layout conflicts with its declaration.');
+                }
+                const definition = await resolveArrayDefinition(ctx, typeDetails, symbolDetails, command => this.sendCommand(command));
+                const address = definition.symbol.Address, size = definition.type.Size;
+                if (address === undefined || size === undefined) { throw new Error('Incomplete array definition has no storage extent.'); }
+                let pending: Promise<Buffer> | undefined;
+                return helper.createVariable(definition.type, definition.symbol, new SymbolNameProvider(definition.symbol), {
+                    value: () => pending ??= this.readVariableMemory(ctx, address, size),
+                    isBigEndian: () => !!((definition.symbol.Flags ?? 0) & SYM_FLAG_BIG_ENDIAN),
+                });
+            }
+            if (!inspection && typeDetails.TypeClass === TCFTypeClass.pointer && symbolDetails.Class === TCFSymbolClass.function) {
+                if (evaluated.partialError) { throw evaluated.partialError; }
+                const size = typeDetails.Size;
+                const bytes = decodeEvaluatedValue(evaluated.value, size);
+                if (typeDetails.Class !== TCFSymbolClass.type || typeDetails.ID !== typeID ||
+                    symbolDetails.ID !== symbolID || symbolDetails.TypeClass !== TCFTypeClass.function ||
+                    (evaluated.properties.Class !== undefined && evaluated.properties.Class !== TCFTypeClass.pointer) ||
+                    size === undefined || ![1, 2, 4, 8].includes(size) || bytes.length !== size ||
+                    (expressionContext?.Size !== undefined && expressionContext.Size !== size) ||
+                    evaluated.properties.ImplicitPointer || evaluated.properties.Pieces?.length ||
+                    evaluated.properties.BitStride || evaluated.properties.BinaryScale || evaluated.properties.DecimalScale) {
+                    throw new Error(`Cannot display function address ${displayName || varName}: unsupported metadata or address width.`);
+                }
+                // eslint-disable-next-line @typescript-eslint/naming-convention -- TCF metadata: the function is not pointer storage or dereferenceable data.
+                return helper.createVariable({ ...typeDetails, BaseTypeID: undefined }, undefined, nameProvider, {
+                    value: async () => bytes,
+                    isBigEndian: () => evaluated.properties?.BigEndian === true,
+                });
+            }
             this.console.received(`Got variable ${symbolDetails.Name}`);
             nameProvider = new SymbolNameProvider(symbolDetails);
             if (!inspection && !bitfieldValue) { valueProvider = new SymbolRawValueProvider(symbolDetails, ctx, helper, helper /* as Logger */); }
@@ -408,6 +483,18 @@ export abstract class TCFClient extends AbstractTCFClient {
             valueProvider = { value: async () => bytes, isBigEndian: () => evaluated.properties?.BigEndian === true };
         }
         return helper.createVariable(typeDetails, symbolDetails, nameProvider, valueProvider);
+    }
+
+    private async readVariableMemory(contextId: string, address: number, size: number): Promise<Buffer> {
+        validateVariableSize(size);
+        if (!Number.isSafeInteger(address) || address < 0 || !Number.isSafeInteger(address + size)) {
+            throw new Error('Variable address range cannot be represented safely by TCF.');
+        }
+        const result = await this.sendCommand(new GetMemoryCommand(contextId, address, 1, size));
+        if (result.errorAddresses?.length) { throw new Error('Variable memory contains unreadable bytes.'); }
+        const bytes = tryDecodeBase64Text(result.base64);
+        if (!bytes || bytes.length !== size) { throw new Error(`Variable memory did not return the expected ${size} bytes.`); }
+        return bytes;
     }
 
     private invalidateThreads(): void {

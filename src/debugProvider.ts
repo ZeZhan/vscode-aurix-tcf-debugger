@@ -65,6 +65,8 @@ import { NativePeripheralAccess, NativePeripheralWrite } from './nativePeriphera
 import { FullPeripheralReader, PeripheralRegisterReader, peripheralPageSchema } from './peripheralInspection';
 import { randomUUID } from 'crypto';
 import { GlobalSelection, GlobalVariableInspector, globalLookupSchema } from './variables/globals';
+import { GetContextSymbolsCommand } from './tcf/symbols';
+import { resolveVariableTypeName } from './variables/typeName';
 
 const inspectionOptionsSchema = z.object({
 	threadId: z.number().int().positive(), epoch: z.number().int().nonnegative(),
@@ -197,7 +199,7 @@ class DebugLogger implements TCFLogger {
 
 type BreakpointTuple = { id: number; file: string; line: number; verified: boolean };
 type InstructionBreakpointTuple = { id: number; address: number; verified: boolean };
-type WatchExpressionState = { result: string; liveRefreshable: boolean };
+type WatchExpressionState = { result: string; type?: string; liveRefreshable: boolean };
 
 class BreakpointsManager {
 	configured = false;
@@ -2261,8 +2263,8 @@ export class AurixTCFDebugSession extends LifetimeDebugSession {
 			}
 
 			const vars = await this.tcfClient.getStackVariables(ctx, stack);
-			const filtered = vars.filter(v => v.isRegister() === false);
-			const dapVars = await Promise.all(filtered.map(v => this.toDAPVariable(v, args.variablesReference)));
+			// A source local can reside in a register; register storage is not a separate scope.
+			const dapVars = await Promise.all(vars.map(v => this.toDAPVariable(v, args.variablesReference)));
 			response.body = { variables: dapVars };
 			this.sendResponse(response);
 		} catch (e) {
@@ -2382,13 +2384,16 @@ export class AurixTCFDebugSession extends LifetimeDebugSession {
 			if (result === undefined) {
 				throw new Error(`Cannot display expression '${expressionText}': value decoding failed`);
 			}
+			const type = await resolveVariableTypeName(v.type, id => this.tcfClient.sendCommand(new GetContextSymbolsCommand(id)));
 			response.body = {
 				result,
 				variablesReference,
+				...(type === undefined ? {} : { type }),
 			};
 			if (isWatchRequest) {
 				this.watchExpressionStates.set(expressionText, {
 					result: response.body.result,
+					type: response.body.type,
 					liveRefreshable,
 				});
 				this.refreshLiveWatchTimer();
@@ -2457,7 +2462,7 @@ export class AurixTCFDebugSession extends LifetimeDebugSession {
 		if (!cached) {
 			return false;
 		}
-		response.body = { result: cached.result, variablesReference: 0 };
+		response.body = { result: cached.result, variablesReference: 0, ...(cached.type === undefined ? {} : { type: cached.type }) };
 		this.sendResponse(response);
 		return true;
 	}
@@ -2528,10 +2533,15 @@ export class AurixTCFDebugSession extends LifetimeDebugSession {
 		this.pendingStepOutTargets.delete(args.threadId);
 		const contextId = this.threadIdToContext.get(args.threadId);
 		this.pendingStepThreads.add(args.threadId);
-		if (this.instructionSteppingEnabled) {
-			await this.tcfClient.nextInstruction(contextId);
-		} else {
-			await this.tcfClient.next(contextId);
+		try {
+			if (this.instructionSteppingEnabled) {
+				await this.tcfClient.nextInstruction(contextId);
+			} else {
+				await this.tcfClient.next(contextId);
+			}
+		} catch (error) {
+			this.pendingStepThreads.delete(args.threadId);
+			throw error;
 		}
 		this.sendResponse(response);
 	}
@@ -2777,7 +2787,10 @@ export class AurixTCFDebugSession extends LifetimeDebugSession {
 		} catch (error) {
 			this.tcfLogger.error(`Cannot expand variable '${name}': ${String(error)}`);
 		}
-		return new Variable(name, value, variablesReference);
+		const variable: DebugProtocol.Variable = new Variable(name, value, variablesReference);
+		const type = await resolveVariableTypeName(v.type, id => this.tcfClient.sendCommand(new GetContextSymbolsCommand(id)));
+		if (type !== undefined) { variable.type = type; }
+		return variable;
 	}
 
 	private onBreakpointHit(tcfId: string, status: InstanceStatusData[]) {
@@ -2858,10 +2871,8 @@ export class AurixTCFDebugSession extends LifetimeDebugSession {
 		if (stepOutTarget && reasonText.includes('breakpoint')) {
 			this.tcfLogger.log(`[stepOut] return=0x${stepOutTarget.returnAddress.toString(16)} pc=0x${info.pc.toString(16)} mappedReason=${reason}; user breakpoint evidence takes precedence`);
 		}
-		if (reason !== StoppedEventReason.breakpoint) {
-			if (pendingStep || reasonText.includes('step')) {
-				reason = StoppedEventReason.step;
-			}
+		if (reason !== StoppedEventReason.breakpoint && reasonText.includes('step')) {
+			reason = StoppedEventReason.step;
 		}
 		if (this.startupDiagnosticsEnabled) {
 			this.tcfLogger.log(`[runcontrol] suspended id=${contextId} reason=${String(info.reason ?? '')}`);
@@ -2922,8 +2933,8 @@ export class AurixTCFDebugSession extends LifetimeDebugSession {
 			return;
 		}
 
-		// Step is an explicit user action; don't delay or suppress it.
-		if (reason === StoppedEventReason.step) {
+		// A pending request is not evidence of completion; report an interrupting pause without suppression.
+		if (reason === StoppedEventReason.step || (pendingStep && reason === StoppedEventReason.pause)) {
 			this.refreshLiveWatchTimer();
 			this.sendStoppedEvent(reason, threadId);
 			return;

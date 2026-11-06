@@ -7,6 +7,7 @@ import { Logger } from "./helper";
 import { RawValueProvider, VariableHelper } from "./types";
 
 export const SYM_FLAG_BIG_ENDIAN = 0x00001000;
+export const SYM_FLAG_EXTERNAL = 0x00008000;
 export const SYM_FLAG_ARTIFICIAL = 0x00020000;
 export const SYM_FLAG_TYPEDEF = 0x00000002;
 export const SYM_FLAG_TYPE_PARAMETER = 0x00040000;

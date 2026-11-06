@@ -2,6 +2,16 @@
 
 Simple, human-readable release notes for this extension.
 
+## 0.1.36
+- Preserve source locals with unavailable locations as named, typed entries with an explicit reason, and continue listing later locals. Propagate other evaluation, metadata and transport errors instead of returning a truncated success.
+- Keep register-backed source variables and parameters visible in Locals; their storage location no longer causes them to be filtered out. Preserve the separate CORE Registers scope.
+
+## 0.1.35
+- Recover incomplete external primitive arrays in UI expressions from a unique matching complete global definition; validate storage/type/extent before bounded reads so values, children and type names agree. Keep MCP captured-value restrictions and report unavailable or ambiguous definitions explicitly.
+- Preserve native pauses during a pending step instead of reporting step completion; notify the selected core immediately without automatically resuming, and clear pending intent when Next fails.
+- Display evaluated function addresses when the Agent also returns the referenced function symbol, without reading function code or exposing a dereference child. Keep non-data symbol filtering and MCP inspection restrictions.
+- Include grounded type names in expression, variable-tree and cached Watch responses; preserve typedef names and resolve unnamed wrappers, arrays and data pointers through bounded symbol metadata reads.
+
 ## 0.1.34
 - Decode bit-sized expression location pieces and read UI bitfield children through their owning object; use the Agent's extracted values without shifting them again. Reject incomplete bitfield results and preserve MCP's restricted inspection policy.
 
