@@ -2,7 +2,6 @@ import { DefaultVariableHelper } from './helper';
 import { ClientVariable, FixedNameProvider, NameProvider, RawValueProvider } from './types';
 import { GetChildrenSymbolsCommand, GetContextSymbolsCommand, TCFSymbolContextData, TCFTypeClass } from '../tcf/symbols';
 import { SimpleCommand } from '../tcf/tcfutils';
-import { CompositeVariable } from './composite';
 
 export const MAX_VARIABLE_BYTES = 4096;
 export type InspectionCheck = () => void;
@@ -26,8 +25,7 @@ export class InspectionVariableHelper extends DefaultVariableHelper {
 	override log(message: string): void { throw new Error(message); }
 	withCheck(check: InspectionCheck): InspectionVariableHelper { return new InspectionVariableHelper(this.send, check); }
 	override createVariable(type: TCFSymbolContextData, symbol: TCFSymbolContextData | undefined, name: NameProvider, value: RawValueProvider): ClientVariable | undefined {
-		const scalar = type.TypeClass === TCFTypeClass.composite && !symbol
-			? new CompositeVariable(type, type, this, name, value) : super.createVariable(type, symbol, name, value);
+		const scalar = super.createVariable(type, symbol, name, value);
 		return scalar ? new InspectedVariable(scalar, symbol, this) : undefined;
 	}
 }

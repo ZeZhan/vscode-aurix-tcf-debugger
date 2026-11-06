@@ -4,14 +4,14 @@ SPDX-License-Identifier: MIT
 */
 import assert = require("assert");
 import { GetContextSymbolsCommand, TCFSymbolContextData, TCFTypeClass } from "../tcf-all";
-import { AbstractVariable, ClientVariable, FixedNameProvider, NameProvider, RawValueProvider, UndefinedRawValueProvider, VariableHelper } from "./types";
+import { SYM_FLAG_BIG_ENDIAN } from "./symbol";
+import { AbstractVariable, ClientVariable, FixedNameProvider, NameProvider, RawValueProvider, VariableHelper } from "./types";
 
 export class PointerVariable extends AbstractVariable {
-    private children: ClientVariable[] | undefined = undefined;
+    private childrenPromise: Promise<ClientVariable[]> | undefined;
     helper: VariableHelper;
 
-    _displayValue: string | undefined;
-    loadedValue: boolean = false;
+    private displayValuePromise: Promise<string | undefined> | undefined;
 
     constructor(type: TCFSymbolContextData, symbolDetails: TCFSymbolContextData | undefined, nameProvider: NameProvider, valueProvider: RawValueProvider, helper: VariableHelper) {
         super(type, symbolDetails, nameProvider, valueProvider);
@@ -19,41 +19,53 @@ export class PointerVariable extends AbstractVariable {
     }
 
     async getChildren() {
-        if (this.children === undefined) {
-            await this.loadChildren();
-        }
-        return this.children ?? [];
+        return this.childrenPromise ??= this.loadChildren();
     }
 
-    async loadChildren() {
-        if (this.type.BaseTypeID) {
-            //XXX: it looks like we would need to recurse here, eg. we could have a pointer to a pointer to a struct, etc.
-            const baseTypeDetails = await this.helper.sendCommand(new GetContextSymbolsCommand(this.type.BaseTypeID));
-            // How to load the symbol for the pointed data?
-            // It may not even be a symbol but just a memory region.
-            // const symbolDetails = await this.helper.sendCommand(new GetContextSymbolsCommand(...)
-            // or perhaps this.sendCommand(new EvaluateExpressionCommand(varName+"."+this.type.Name)) ?
-
-            baseTypeDetails.Name = baseTypeDetails.Name + "*"; //TODO: marking this as a pointer type. Normally we should return the full list of types upstream and the client decides how to present it in the UI
-
-            const v = this.helper.createVariable(baseTypeDetails, undefined /* no symbol data */, new FixedNameProvider("*"), new UndefinedRawValueProvider());
-            if (v !== undefined) {
-                this.children = [v];
-            } else {
-                this.children = []; //maybe display something generic? Like... "pointer to function"
-            }
-        } else {
-            //TODO: log error?
-            this.children = [];
+    async loadChildren(): Promise<ClientVariable[]> {
+        if (!this.type.BaseTypeID) {
+            return [];
         }
+        const bytes = await this.valueProvider.value();
+        if (!bytes || ![1, 2, 4, 8].includes(bytes.length)) {
+            throw new Error('Pointer value is unavailable or has an unsupported address width.');
+        }
+        const bigEndian = this.valueProvider.isBigEndian();
+        const address = bytes.length === 8
+            ? (bigEndian ? bytes.readBigUInt64BE() : bytes.readBigUInt64LE())
+            : BigInt(bigEndian ? bytes.readUIntBE(0, bytes.length) : bytes.readUIntLE(0, bytes.length));
+        if (address === 0n) {
+            return [];
+        }
+        if (address > BigInt(Number.MAX_SAFE_INTEGER)) {
+            throw new Error('Pointer address cannot be represented safely by TCF.');
+        }
+        const baseTypeDetails = await this.helper.sendCommand(new GetContextSymbolsCommand(this.type.BaseTypeID));
+        if (baseTypeDetails.TypeClass === TCFTypeClass.function ||
+            ((baseTypeDetails.TypeClass === undefined || baseTypeDetails.TypeClass === TCFTypeClass.unknown) && !baseTypeDetails.Size)) {
+            return [];
+        }
+        const size = baseTypeDetails.Size;
+        if (size === undefined || !Number.isSafeInteger(size) || size < 1) {
+            throw new Error('Pointer target size is unavailable or invalid.');
+        }
+        let readPromise: Promise<Buffer> | undefined;
+        const valueProvider: RawValueProvider = {
+            value: () => readPromise ??= Promise.resolve().then(() => {
+                if (!this.helper.readPointerMemory) {
+                    throw new Error('Pointer memory reads are not available in this inspection context.');
+                }
+                return this.helper.readPointerMemory(Number(address), size);
+            }),
+            isBigEndian: () => baseTypeDetails.Flags === undefined
+                ? bigEndian : (baseTypeDetails.Flags & SYM_FLAG_BIG_ENDIAN) !== 0,
+        };
+        const variable = this.helper.createVariable(baseTypeDetails, undefined, new FixedNameProvider("*"), valueProvider);
+        return variable ? [variable] : [];
     }
 
     async displayValue(): Promise<string | undefined> {
-        if (!this.loadedValue) {
-            this.loadedValue = true;
-            this._displayValue = await this.loadValue();
-        }
-        return this._displayValue;
+        return this.displayValuePromise ??= this.loadValue();
     }
 
     async loadValue(): Promise<string | undefined> {
@@ -82,9 +94,6 @@ export class PointerVariable extends AbstractVariable {
                 value = '0x' + variableRawValue.toString('hex');
                 break;
         }
-        //TODO: actually read memory and load that type?
-        //const expr = "*(${" + typeDetails[0].ID + "})" + (variableRawValue.toString('hex'));
-        //const v = new EvaluateExpressionCommand(expr);
         return value;
     }
 

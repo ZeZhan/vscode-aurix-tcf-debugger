@@ -3,6 +3,20 @@
     "definitions": {
         "PieceValue": {
             "properties": {
+                "BitSize": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "BitOffs": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "Address": {
+                    "type": "number"
+                },
+                "Register": {
+                    "type": "string"
+                },
                 "Size": {
                     "type": "number"
                 },
@@ -10,8 +24,9 @@
                     "type": "string"
                 }
             },
-            "required": [
-                "Size"
+            "anyOf": [
+                { "required": ["Size"] },
+                { "required": ["BitSize"] }
             ],
             "type": "object"
         }

@@ -4,7 +4,7 @@ SPDX-License-Identifier: MIT
 */
 import { TCFError } from './error';
 import { TCFTypeClass } from './symbols';
-import { asNullable, asString, asStringArray, handleError, handleErrorBuffer, PromiseError, PromiseSuccess, responseLengthAbout, SimpleCommand, TCFPartialResultError, toBuffer, validateJSON, ValidatingCommand } from './tcfutils';
+import { asNullable, asString, asStringArray, handleError, handleErrorBuffer, parseEmptyResponse, PromiseError, PromiseSuccess, responseLengthAbout, SimpleCommand, TCFPartialResultError, toBuffer, validateJSON, ValidatingCommand } from './tcfutils';
 import * as validateValueProperties from './validators/validate-ValueProperties';
 import * as validateExpressionsContextData from './validators/validate-ExpressionsContextData';
 
@@ -72,9 +72,13 @@ export interface EvaluateResult {
 
 export type base64Text = string;
 
-//Observed in the wild. NOT in spec.
+// Location pieces can describe bytes or bits; evaluate still returns the assembled value.
 export interface PieceValue {
-    Size: number,
+    Size?: number,
+    BitSize?: number,
+    BitOffs?: number,
+    Address?: number,
+    Register?: string,
     Value?: base64Text //base64 encoded value
 }
 
@@ -201,6 +205,15 @@ export class CreateExpressionsCommand extends ExpressionsValidatingCommand<strin
 
     override cast(json: any): string {
         return asExpressionId(json);
+    }
+}
+
+export class DisposeExpressionsCommand extends ExpressionsCommand<undefined> {
+    constructor(private readonly expressionID: string) { super(); }
+    command(): string { return "dispose"; }
+    arguments() { return this.expressionID; }
+    result(response: Buffer[], success: PromiseSuccess<undefined>, error: PromiseError<undefined>): void {
+        parseEmptyResponse(response, success, error);
     }
 }
 

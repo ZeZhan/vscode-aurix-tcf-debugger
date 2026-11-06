@@ -209,6 +209,17 @@ stopped every core.
 Add variables and expressions in the Run and Debug view's **WATCH** section.
 Unavailable values are reported rather than replaced with guessed values.
 
+To show available type names in **VARIABLES** and **WATCH**, open Settings
+(`Ctrl+,`), search for `debug.showVariableTypes`, and enable **Debug: Show
+Variable Types**. This is a built-in VS Code setting, disabled by default.
+Alternatively, add it to your user or workspace settings:
+
+```json
+{
+  "debug.showVariableTypes": true
+}
+```
+
 ![add-to-watch](media/add-to-watch.gif)
 
 ### Live Watch View

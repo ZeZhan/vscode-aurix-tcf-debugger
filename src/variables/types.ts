@@ -24,6 +24,8 @@ export interface ClientVariable extends RawValueProvider, NameProvider {
 
 export interface VariableHelper {
     sendCommand<T>(c: SimpleCommand<T>): Promise<T>;
+    readPointerMemory?(address: number, size: number): Promise<Buffer>;
+    createBitfieldValue?(parent: TCFSymbolContextData, field: TCFSymbolContextData, type: TCFSymbolContextData): RawValueProvider;
     createVariable(type: TCFSymbolContextData, symbolDetails: TCFSymbolContextData | undefined, nameProvider: NameProvider, valueProvider: RawValueProvider): ClientVariable | undefined;
 }
 
