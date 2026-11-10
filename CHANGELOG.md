@@ -2,6 +2,13 @@
 
 Simple, human-readable release notes for this extension.
 
+## 0.1.38
+- Preserve disabled source and instruction breakpoints in VS Code when the Agent acknowledges their removal from the active target set. Ignore late native updates for retired IDs; continue reporting genuine native deletion of currently requested breakpoints.
+- Known issue: the second reset in the global breakpoint-deactivation hardware test disconnected with `ECONNRESET`; this release does not claim to fix that reset failure.
+
+## 0.1.37
+- Treat expired UI source-frame selections as explicitly stale, logged responses instead of unhandled request errors. Do not reveal stale source or retry with another core; retain wrong-core and malformed-request validation.
+
 ## 0.1.36
 - Preserve source locals with unavailable locations as named, typed entries with an explicit reason, and continue listing later locals. Propagate other evaluation, metadata and transport errors instead of returning a truncated success.
 - Keep register-backed source variables and parameters visible in Locals; their storage location no longer causes them to be filtered out. Preserve the separate CORE Registers scope.

@@ -2828,6 +2828,12 @@ export class AurixTCFDebugSession extends LifetimeDebugSession {
 			if (id === BREAKPOINT_INVALID) {
 				continue;
 			}
+			// setBreakpoints already retires disabled/deleted IDs before native sync.
+			// Echoing those removals would delete VS Code's retained disabled entry.
+			if (!this.breakpointsManager.getById(id) && !this.instructionBreakpointsManager.getById(id)) {
+				this.tcfLogger.log(`Ignoring native removal of retired breakpoint ${tcfId}`);
+				continue;
+			}
 			this.breakpointsManager.deleteById(id);
 			this.instructionBreakpointsManager.deleteById(id);
 			this.sendEvent(new BreakpointEvent(BreakpointEventReason.removed, { id, verified: false }));
@@ -2838,6 +2844,10 @@ export class AurixTCFDebugSession extends LifetimeDebugSession {
 		for (const tcfId of tcfIds) {
 			const id = this.breakpointTcfIdToId(tcfId);
 			if (id === BREAKPOINT_INVALID) {
+				continue;
+			}
+			if (!this.breakpointsManager.getById(id) && !this.instructionBreakpointsManager.getById(id)) {
+				this.tcfLogger.log(`Ignoring native update of retired breakpoint ${tcfId}`);
 				continue;
 			}
 			this.breakpointRevision++;
@@ -3168,8 +3178,15 @@ export class AurixTCFDebugSession extends LifetimeDebugSession {
 				throw new Error('frameSource requires integer frameId and threadId');
 			}
 			const frame = this.frameIdToMeta.get(args.frameId);
-			if (!frame || frame.threadId !== args.threadId) {
-				throw new Error('frameSource refers to an expired frame or a different core');
+			if (!frame) {
+				// UI selection can outlive a resume/reset notification in the adapter.
+				this.tcfLogger.log(`frameSource expired: frame=${args.frameId} thread=${args.threadId}`);
+				response.body = { stale: true };
+				this.sendResponse(response);
+				return;
+			}
+			if (frame.threadId !== args.threadId) {
+				throw new Error('frameSource refers to a different core');
 			}
 			response.body = { source: frame.source };
 			this.sendResponse(response);

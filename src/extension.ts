@@ -1246,9 +1246,16 @@ async function revealSelectedFrameSource(item: vscode.DebugStackFrame, generatio
 		return;
 	}
 	try {
-		const result: { source?: { path: string; line: number } } = await item.session.customRequest(
+		const result: { stale?: boolean; source?: { path: string; line: number } } = await item.session.customRequest(
 			'aurix-tcf/frameSource', { threadId: item.threadId, frameId: item.frameId });
-		if (!isCurrent() || !result.source) {
+		if (!isCurrent()) {
+			return;
+		}
+		if (result.stale) {
+			agentOutput?.appendLine(`Skipped expired source selection: frame=${item.frameId} thread=${item.threadId}`);
+			return;
+		}
+		if (!result.source) {
 			return;
 		}
 		const source = result.source;
