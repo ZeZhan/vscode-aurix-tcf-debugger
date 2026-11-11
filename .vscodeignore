@@ -22,3 +22,4 @@ scripts/run-test.ps1
 scripts/tc375.example.json
 scripts/test-tc375.ps1
 scripts/test-peripheral-viewer.cjs
+scripts/.tc375-full-hardware-profile.tmp.json
